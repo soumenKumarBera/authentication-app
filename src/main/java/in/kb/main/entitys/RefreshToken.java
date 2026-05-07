@@ -19,15 +19,11 @@ public class RefreshToken {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    private String jti;
-
-    @Column(unique = true)
+    @Column(length = 1000)
     private String token;
-
-    @ManyToOne
-    private User user;
 
     private Instant expiryDate;
 
-    private boolean revoked;
+    @OneToOne
+    private User user;
 }

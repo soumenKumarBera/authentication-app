@@ -1,11 +1,9 @@
 package in.kb.main.services;
 
-import in.kb.main.entitys.User;
+
 import in.kb.main.repositorys.UserRepository;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.core.userdetails.UserDetails;
-import org.springframework.security.core.userdetails.UserDetailsService;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
+import org.springframework.security.core.userdetails.*;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -18,13 +16,14 @@ public class CustomUserDetailsService implements UserDetailsService {
     public UserDetails loadUserByUsername(String email)
             throws UsernameNotFoundException {
 
-        User user = userRepository.findByEmail(email)
-                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+        var user = userRepository.findByEmail(email)
+                .orElseThrow(() ->
+                        new UsernameNotFoundException("User Not Found"));
 
-        return org.springframework.security.core.userdetails.User.builder()
-                .username(user.getEmail())
+        return org.springframework.security.core.userdetails.User
+                .withUsername(user.getEmail())
                 .password(user.getPassword())
-                .roles(user.getRole().name())
+                .roles(user.getRole().name().replace("ROLE_", ""))
                 .build();
     }
 }

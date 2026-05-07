@@ -1,53 +1,143 @@
 package in.kb.main.services;
 
+
 import in.kb.main.dtos.LoginRequest;
 import in.kb.main.dtos.RegisterRequest;
+
 import in.kb.main.entitys.RefreshToken;
 import in.kb.main.entitys.User;
+
+import in.kb.main.repositorys.RefreshTokenRepository;
 import in.kb.main.repositorys.UserRepository;
+import in.kb.main.security.JwtService;
+import in.kb.main.util.CookieUtil;
 import lombok.RequiredArgsConstructor;
-import org.springframework.security.authentication.BadCredentialsException;
-import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
+import org.springframework.http.*;
+import org.springframework.security.authentication.*;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 
-import java.util.Map;
+import java.time.Instant;
+import java.util.*;
 
 @Service
 @RequiredArgsConstructor
 public class AuthService {
 
-    private final UserRepository userRepo;
-    private final BCryptPasswordEncoder encoder;
+    private final UserRepository userRepository;
+    private final RefreshTokenRepository refreshTokenRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final AuthenticationManager authenticationManager;
     private final JwtService jwtService;
-    private final RefreshTokenService refreshService;
 
-    public User register(RegisterRequest req) {
-        User user = new User();
-        user.setEmail(req.getEmail());
-        user.setPassword(encoder.encode(req.getPassword()));
-        user.setRole(req.getRole());
+    public void register(RegisterRequest req) {
 
-        return userRepo.save(user);
+        User user = User.builder()
+                .name(req.getName())
+                .email(req.getEmail())
+                .password(
+                        passwordEncoder.encode(req.getPassword())
+                )
+                .role(req.getRole())
+                .build();
+
+        userRepository.save(user);
     }
 
-    public Map<String, String> login(LoginRequest req) {
+    public ResponseEntity<?> login(LoginRequest req) {
 
-        User user = userRepo.findByEmail(req.getEmail())
-                .orElseThrow(()-> new BadCredentialsException("invalid email"));
+        authenticationManager.authenticate(
+                new UsernamePasswordAuthenticationToken(
+                        req.getEmail(),
+                        req.getPassword()
+                )
+        );
 
-        if (!encoder.matches(req.getPassword(), user.getPassword())) {
-            throw new RuntimeException("Invalid credentials");
+        User user = userRepository.findByEmail(req.getEmail())
+                .orElseThrow();
+
+        String accessToken =
+                jwtService.generateAccessToken(user.getEmail());
+
+        String refreshToken =
+                jwtService.generateRefreshToken(user.getEmail());
+
+        refreshTokenRepository.deleteByUser(user);
+
+        RefreshToken token = RefreshToken.builder()
+                .token(refreshToken)
+                .expiryDate(Instant.now().plusSeconds(604800))
+                .user(user)
+                .build();
+
+        refreshTokenRepository.save(token);
+
+        ResponseCookie accessCookie =
+                CookieUtil.accessCookie(accessToken);
+
+        ResponseCookie refreshCookie =
+                CookieUtil.refreshCookie(refreshToken);
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE,
+                        accessCookie.toString())
+                .header(HttpHeaders.SET_COOKIE,
+                        refreshCookie.toString())
+                .body("Login Success");
+    }
+
+    public ResponseEntity<?> refresh(String refreshToken) {
+
+        if (jwtService.isExpired(refreshToken)) {
+
+            return ResponseEntity.status(401)
+                    .body("Invalid Refresh Token");
         }
 
-        String access = jwtService.generateAccessToken(user);
+        var stored =
+                refreshTokenRepository.findByToken(refreshToken)
+                        .orElse(null);
 
-        RefreshToken refresh = refreshService.create(user);
-        String refreshToken = jwtService.generateRefreshToken( user, refresh.getJti());
+        if (stored == null) {
 
-        return Map.of(
-                "access", access,
-                "refresh", refreshToken
-        );
+            return ResponseEntity.status(401)
+                    .body("Refresh Token Not Found");
+        }
+
+        String email =
+                jwtService.getEmail(refreshToken);
+
+        String newAccessToken =
+                jwtService.generateAccessToken(email);
+
+        ResponseCookie accessCookie =
+                CookieUtil.accessCookie(newAccessToken);
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE,
+                        accessCookie.toString())
+                .body("Token Refreshed");
+    }
+
+    public ResponseEntity<?> logout(String refreshToken) {
+
+        if (refreshToken != null) {
+
+            refreshTokenRepository.findByToken(refreshToken)
+                    .ifPresent(refreshTokenRepository::delete);
+        }
+
+        ResponseCookie accessCookie =
+                CookieUtil.clearCookie("accessToken");
+
+        ResponseCookie refreshCookie =
+                CookieUtil.clearCookie("refreshToken");
+
+        return ResponseEntity.ok()
+                .header(HttpHeaders.SET_COOKIE,
+                        accessCookie.toString())
+                .header(HttpHeaders.SET_COOKIE,
+                        refreshCookie.toString())
+                .body("Logout Success");
     }
 }
